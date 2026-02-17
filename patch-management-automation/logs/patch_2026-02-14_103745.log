@@ -1,0 +1,66 @@
+===== PATCH START: 2026-02-14_103745 =====
+
+>>> Host:
+ Static hostname: liliane
+       Icon name: computer-container
+         Chassis: container ☐
+      Machine ID: 060a60bd3b694dad89b1171099276943
+         Boot ID: 2f9e59efa2de41db8c4ffb0af820edeb
+  Virtualization: wsl
+Operating System: Ubuntu 24.04.4 LTS
+          Kernel: Linux 6.6.87.2-microsoft-standard-WSL2
+    Architecture: x86-64
+
+>>> Kernel (before):
+6.6.87.2-microsoft-standard-WSL2
+
+>>> Available updates (before):
+Hit:1 https://aquasecurity.github.io/trivy-repo/deb noble InRelease
+Ign:2 https://pkg.jenkins.io/debian-stable binary/ InRelease
+Get:3 https://pkg.jenkins.io/debian-stable binary/ Release [2044 B]
+Hit:4 https://download.docker.com/linux/ubuntu noble InRelease
+Ign:5 https://apt.datadoghq.com stable InRelease
+Hit:6 https://artifacts.elastic.co/packages/8.x/apt stable InRelease
+Get:7 https://pkg.jenkins.io/debian-stable binary/ Release.gpg [833 B]
+Hit:8 https://apt.releases.hashicorp.com noble InRelease
+Hit:9 https://apt.datadoghq.com stable Release
+Get:10 https://packages.grafana.com/oss/deb stable InRelease [7661 B]
+Hit:11 https://packages.microsoft.com/repos/azure-cli noble InRelease
+Hit:12 https://repo.mongodb.org/apt/ubuntu focal/mongodb-org/6.0 InRelease
+Hit:14 https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 InRelease
+Hit:15 http://security.ubuntu.com/ubuntu noble-security InRelease
+Hit:16 https://packages.cloud.google.com/apt cloud-sdk InRelease
+Hit:13 https://prod-cdn.packages.k8s.io/repositories/isv:/kubernetes:/core:/stable:/v1.29/deb  InRelease
+Hit:17 http://archive.ubuntu.com/ubuntu noble InRelease
+Hit:18 http://archive.ubuntu.com/ubuntu noble-updates InRelease
+Hit:19 http://archive.ubuntu.com/ubuntu noble-backports InRelease
+Err:7 https://pkg.jenkins.io/debian-stable binary/ Release.gpg
+  The following signatures couldn't be verified because the public key is not available: NO_PUBKEY 7198F4B714ABFC68
+Err:10 https://packages.grafana.com/oss/deb stable InRelease
+  The following signatures were invalid: EXPKEYSIG 963FA27710458545 Grafana Labs <engineering@grafana.com>
+Fetched 833 B in 2s (400 B/s)
+Reading package lists...
+Listing...
+
+>>> Applying patches:
+Reading package lists...
+Building dependency tree...
+Reading state information...
+Calculating upgrade...
+0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.
+
+>>> Removing unused packages:
+Reading package lists...
+Building dependency tree...
+Reading state information...
+0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.
+
+>>> Updated packages installed (summary):
+
+>>> Kernel (after):
+6.6.87.2-microsoft-standard-WSL2
+
+>>> Reboot required?
+NO - reboot not required
+
+===== PATCH END: 2026-02-14_103745 =====

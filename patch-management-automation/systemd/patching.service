@@ -1,0 +1,8 @@
+[Unit]
+Description=Weekly Patch Management Automation
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/patch.sh

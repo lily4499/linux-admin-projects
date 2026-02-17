@@ -1,0 +1,7 @@
+[Unit]
+Description=Auto-Heal Health Check (runs health-check.sh)
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/health-check.sh

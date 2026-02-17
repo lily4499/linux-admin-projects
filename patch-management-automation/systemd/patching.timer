@@ -1,0 +1,9 @@
+[Unit]
+Description=Run patching.service weekly
+
+[Timer]
+OnCalendar=Sun *-*-* 02:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Auto-Heal Health Check every 60 seconds
+
+[Timer]
+OnBootSec=30
+OnUnitActiveSec=60
+AccuracySec=5
+Unit=auto-heal.service
+
+[Install]
+WantedBy=timers.target

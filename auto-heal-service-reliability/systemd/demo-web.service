@@ -1,0 +1,14 @@
+[Unit]
+Description=Demo Web Service (Auto-Heal Lab)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/demo-web
+ExecStart=/usr/bin/python3 -m http.server 8080
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

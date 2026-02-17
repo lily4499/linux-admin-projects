@@ -1,3 +1,4 @@
+
 # Auto-Heal Service Reliability (systemd + Health Check Script)
 
 **Goal:** If a service goes down, the server detects it and restarts it automatically.
@@ -8,14 +9,28 @@ This is the same reliability idea used in real operations: **detect → recover 
 
 ---
 
+## Screenshots (GitHub-visible)
+
+To make screenshots render on GitHub, I keep them inside the repo and reference them with **relative paths**:
+
+- Folder: `./screenshots/`
+- Example: `![Timer running](./screenshots/01-timer-running.png)`
+
+**Important (common reasons images don’t show):**
+- The image files are not committed/pushed (`git add screenshots/*.png && git commit && git push`)
+- Filename/case mismatch (GitHub is case-sensitive): `01-timer-running.png` ≠ `01-Timer-Running.PNG`
+- The README is in a different folder than `screenshots/` (paths must be relative to where the README lives)
+
+---
+
 ## Problem
 
 In real systems, a service can fail without warning:
 
-* the process crashes
-* the port stops listening
-* the HTTP endpoint hangs or starts returning errors
-* the service looks “running” but users can’t reach it
+- the process crashes
+- the port stops listening
+- the HTTP endpoint hangs or starts returning errors
+- the service looks “running” but users can’t reach it
 
 When this happens, downtime increases, tickets come in, and someone has to jump in to restart the service manually.
 
@@ -25,24 +40,23 @@ When this happens, downtime increases, tickets come in, and someone has to jump 
 
 I implemented a lightweight “auto-heal” pattern using **systemd + Bash**:
 
-* I wrote a **health-check script** that verifies:
-
-  * the service is **active** in systemd
-  * the service port is **listening**
-  * the HTTP endpoint responds with **2xx/3xx**
-* If the service is unhealthy, my script:
-
-  * **restarts** the service
-  * logs what happened in **/var/log/auto-heal/auto-heal.log**
-* I wrapped the script in a **systemd oneshot service**
-* I scheduled it with a **systemd timer** to run every 60 seconds
+- I wrote a **health-check script** that verifies:
+  - the service is **active** in systemd
+  - the service port is **listening**
+  - the HTTP endpoint responds with **2xx/3xx**
+- If the service is unhealthy, my script:
+  - **restarts** the service
+  - logs what happened in **/var/log/auto-heal/auto-heal.log**
+- I wrapped the script in a **systemd oneshot service**
+- I scheduled it with a **systemd timer** to run every 60 seconds
 
 ---
 
 ## Architecture Diagram
 
-![Architecture Diagram](screenshots/architecture.png)
+![Architecture Diagram](./screenshots/architecture.png)
 
+*Screenshot — Architecture diagram (`screenshots/architecture.png`)*
 
 ---
 
@@ -57,7 +71,7 @@ I implemented a lightweight “auto-heal” pattern using **systemd + Bash**:
 ```bash
 mkdir -p auto-heal-service-reliability/{scripts,systemd,screenshots}
 cd auto-heal-service-reliability
-```
+````
 
 ---
 
@@ -200,10 +214,9 @@ tail -n 10 /var/log/auto-heal/auto-heal.log
 
 #### Screenshot — Proof the script writes audit logs
 
+![02 - Auto-heal log proof](./screenshots/02-auto-heal-log.png)
 
-* `screenshots/02-auto-heal-log.png`
-
-![02 - Auto-heal log proof](screenshots/02-auto-heal-log.png)
+*Screenshot file: `screenshots/02-auto-heal-log.png`*
 
 ---
 
@@ -279,9 +292,11 @@ systemctl list-timers --all | grep auto-heal || true
 
 #### Screenshot — Timer running
 
-* `screenshots/01-timer-running.png`
+![01 - Timer running](./screenshots/01-timer-running.png)
 
-![01 - Timer running](screenshots/01-timer-running.png)
+*Screenshot file: `screenshots/01-timer-running.png`*
+
+---
 
 ### Step 7 — Simulate a failure (prove the auto-heal works)
 
@@ -314,11 +329,9 @@ Expected log lines include:
 
 #### Screenshot — Service healthy after recovery
 
-After the recovery, capture proof and save it as:
+![03 - Service healthy after recovery](./screenshots/03-service-healthy.png)
 
-* `screenshots/03-service-healthy.png`
-
-![03 - Service healthy after recovery](screenshots/03-service-healthy.png)
+*Screenshot file: `screenshots/03-service-healthy.png`*
 
 ---
 
@@ -401,3 +414,5 @@ sudo rm -f /usr/local/bin/health-check.sh
 sudo rm -rf /opt/demo-web
 sudo rm -rf /var/log/auto-heal
 ```
+
+

@@ -1,357 +1,283 @@
+
 # Detect Low Disk/Memory and Alert Before Outage
 
-Goal: Detect low disk/memory and alert before outage.
+## Context
 
-This project helps me catch **low disk space** and **low memory** *before* they take down a server.  
-I set up simple monitoring + alerts so I can fix the issue early (clean logs, expand disk, restart a leaking service) instead of waiting for an outage.
+In a real operations environment, servers do not always fail because of bad application code.  
+Sometimes the issue is simple infrastructure pressure that grows quietly over time.
+
+For example:
+
+- logs keep growing until disk becomes full
+- backup files accumulate and consume storage
+- Docker images and containers take too much space
+- one leaking process slowly eats memory
+- the server becomes slow, unstable, or unavailable
+
+This kind of problem often starts small, but if nobody sees it early, it can turn into a real outage.
+
+I wanted a simple monitoring setup that could warn me before the server reached a critical point, so I could fix the issue early instead of reacting after production was already affected.
 
 ---
 
 ## Problem
 
-In real systems, outages often happen because the server runs out of:
+Low disk and low memory are common server problems, but they become dangerous when they are not detected early.
 
-- **Disk space** (logs grow, backups pile up, Docker images fill storage)
-- **Memory** (memory leaks, too many processes, heavy services)
+If disk usage becomes too high:
 
-When disk hits **100%**, apps can’t write logs/data, and services crash.  
-When memory is exhausted, the server starts swapping, becomes slow, and can freeze.
+- applications may stop writing logs
+- services may fail to write temporary files
+- deployments can fail
+- databases may have write issues
 
-I needed an automated way to detect it early and alert me **before production breaks**.
+If memory becomes too low:
+
+- the server gets slow
+- swap usage increases
+- applications become unstable
+- the operating system may kill processes
+
+Without early alerting, I may only notice the issue after users are already impacted.  
+That turns a preventable resource issue into downtime.
 
 ---
 
 ## Solution
 
-I built a lightweight alerting setup using:
+To solve this, I built a lightweight disk and memory alerting setup.
 
-- A **Bash health check script** to detect low disk/memory
-- A **systemd service + timer** (or cron) to run checks automatically
-- Alerts via:
-  - **Email** (local mail + SMTP relay) *or*
-  - **Slack webhook** *(easy + common)*
+The solution includes:
 
-The script checks thresholds like:
-- Disk usage > **80% warning**, > **90% critical**
-- Memory available < **20% warning**, < **10% critical**
+- a Bash health check script
+- a systemd service and timer to run checks automatically
+- Slack or email alerts when thresholds are crossed
+- a local log file to keep a record of checks and alerts
 
-When thresholds are crossed, I get an alert with:
+The script watches for:
+
+- disk usage reaching warning or critical levels
+- memory available dropping below safe levels
+
+When a threshold is crossed, the alert includes useful details such as:
+
 - hostname
-- disk/memory usage
-- top processes (for memory)
-- biggest directories (for disk)
+- current disk usage
+- current memory usage
+- top memory-consuming processes
+- largest disk-consuming directories
+
+This gives me enough information to respond quickly and fix the issue before it becomes an outage.
 
 ---
 
-## Architecture Diagram
+## Architecture
 
 ![Architecture Diagram](screenshots/architecture.png)
 
+---
 
+## Workflow with Goals + Screenshots
+
+### Build and test the health check
+
+**Goal:** verify the monitoring logic works before automation.
+
+I created the health check script and tested it manually first to confirm it could detect disk and memory status correctly and produce useful output.
+
+**Screenshot used in this project:**
+
+- `screenshots/01-script-test.png`  
+  **Should show:** successful test output from the health check script.
 
 ---
 
-## Step-by-step CLI
+### Automate the monitoring on a schedule
 
-### 1) Create project folder
+**Goal:** make the checks run automatically and consistently.
 
-```bash
-mkdir -p ~/disk-mem-alert/{scripts,logs}
-cd ~/disk-mem-alert
-```
+After confirming the script worked, I connected it to a systemd service and timer so the monitoring runs on a schedule without manual effort.
 
----
+**Screenshots used in this project:**
 
-### 2) Create the health check script
+- `screenshots/02-timer-status.png`  
+  **Should show:** the timer is active and enabled.
 
-```bash
-nano scripts/health-check.sh
-```
-
-
-```bash
-
-```
-
-Make it executable:
-
-```bash
-chmod +x scripts/health-check.sh
-```
-
-Test it:
-
-```bash
-./scripts/health-check.sh
-```
-![alt text](image.png)
-**Screenshot — Script test (OK run)**
-![Script test output](screenshots/01-script-test.png)
+- `screenshots/03-list-timers.png`  
+  **Should show:** the timer appears in the system timer list.
 
 ---
 
-### 3) (Optional but recommended) Store Slack webhook in a safe place
+### Trigger a test alert
 
-Create an env file:
+**Goal:** prove the notification path works before a real incident happens.
 
-```bash
-sudo nano /etc/default/disk-mem-alert
-```
+I forced a test alert using temporary aggressive thresholds.  
+This allowed me to confirm that Slack or email alerting was working correctly.
 
-Add:
+**Screenshot used in this project:**
 
-```bash
-SLACK_WEBHOOK_URL="https://hooks.slack.com/services/XXXXX/XXXXX/XXXXX"
-```
-
-Secure it:
-
-```bash
-sudo chmod 600 /etc/default/disk-mem-alert
-```
+- `screenshots/04-slack-alert.png`  
+  **Should show:** alert message received in Slack or email.
 
 ---
 
-### 4) Create a systemd service
+### Review the local log evidence
 
-```bash
-sudo nano /etc/systemd/system/disk-mem-alert.service
-```
+**Goal:** keep execution history for proof and troubleshooting.
 
-Paste:
+I also kept a local log file so I can confirm checks are running, review previous output, and troubleshoot missed alerts more easily.
 
-```ini
-[Unit]
-Description=Disk/Memory Alert Check
-After=network-online.target
-Wants=network-online.target
+**Screenshot used in this project:**
 
-[Service]
-Type=oneshot
-EnvironmentFile=-/etc/default/disk-mem-alert
-ExecStart=/home/%u/disk-mem-alert/scripts/health-check.sh
-User=%u
-```
+- `screenshots/05-log-file.png`  
+  **Should show:** health check log entries recorded locally.
 
 ---
 
-### 5) Create a systemd timer (runs every 5 minutes)
+## Business Impact
 
-```bash
-sudo nano /etc/systemd/system/disk-mem-alert.timer
-```
+This project helps reduce outages by detecting server resource pressure before it becomes a production failure.
 
-Paste:
+Business value:
 
-```ini
-[Unit]
-Description=Run Disk/Memory Alert Check Every 5 Minutes
+- reduces downtime caused by full disk or memory exhaustion
+- gives early warning so issues can be fixed safely
+- helps prevent failed deployments and unstable services
+- improves incident response with useful alert details
+- reduces manual monitoring by automating repeated checks
 
-[Timer]
-OnBootSec=2min
-OnUnitActiveSec=5min
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-```
-
-Reload systemd and enable timer:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now disk-mem-alert.timer
-```
-
-Verify:
-
-```bash
-systemctl status disk-mem-alert.timer
-```
-
-**Screenshot — Timer status (systemctl status)**
-![Timer status](screenshots/02-timer-status.png)
-
-List timers:
-
-```bash
-systemctl list-timers | grep disk-mem-alert
-```
-
-**Screenshot — Timer appears in list-timers**
-![List timers](screenshots/03-list-timers.png)
-
-Manually trigger once (proof run under systemd):
-
-```bash
-sudo systemctl start disk-mem-alert.service
-sudo journalctl -u disk-mem-alert.service --no-pager -n 50
-```
-
----
-
-### 6) Proof: simulate an alert (Slack/email) and capture evidence
-
-To prove alerting works without waiting for a real outage, I run a **temporary test copy** with aggressive thresholds.
-
-Create a test copy:
-
-```bash
-cp scripts/health-check.sh scripts/health-check-test.sh
-chmod +x scripts/health-check-test.sh
-```
-
-Edit the test copy thresholds (ONLY the test file):
-
-```bash
-nano scripts/health-check-test.sh
-```
-
-Set something like:
-
-```bash
-DISK_WARN=1
-DISK_CRIT=2
-MEM_WARN=99
-MEM_CRIT=98
-```
-
-Run it:
-
-```bash
-export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/XXXXX/XXXXX/XXXXX"
-
-./scripts/health-check-test.sh
-```
-
-**Screenshot — Alert received in Slack (or Email)**
-![Slack alert](screenshots/04-slack-alert.png)
-
-Revert cleanup (remove the test copy):
-
-```bash
-rm -f scripts/health-check-test.sh
-```
-
----
-
-### 7) Check the local log file (proof trail)
-
-```bash
-tail -n 50 logs/health-check.log
-```
-
-**Screenshot — Log file evidence (tail output)**
-![Log file output](screenshots/05-log-file.png)
-
----
-
-## Outcome
-
-With this running, I get proactive alerts when:
-
-* Disk starts filling up (so I can clean logs, remove unused Docker images, rotate files, expand storage)
-* Memory drops too low (so I can restart a leaking service, scale resources, or investigate the heavy process)
-
-This reduces outages because I’m fixing the issue **before** the server hits a hard limit.
+In a real company environment, this kind of setup supports better uptime, faster action, and more stable systems.
 
 ---
 
 ## Troubleshooting
 
-### Timer is running but no alerts are sent
+### No alert is received
 
-Check if the webhook is set:
+Possible reasons:
+
+- Slack webhook or email setup is missing
+- thresholds were not crossed
+- the service could not read environment variables
+- the script ran but notification delivery failed
+
+---
+
+### Script works manually but not through systemd
+
+Possible reasons:
+
+- wrong absolute script path
+- missing execute permission
+- missing environment variables
+- difference between shell environment and systemd environment
+
+---
+
+### Too many alerts
+
+Possible reasons:
+
+- thresholds are too low
+- timer runs too often
+- no cooldown logic exists
+
+Possible improvements:
+
+- raise thresholds
+- reduce check frequency
+- add cooldown logic
+
+---
+
+### Disk remains full after alert
+
+Possible reasons:
+
+- logs continue growing
+- Docker artifacts are using space
+- backup files or temporary files are accumulating
+
+---
+
+### Memory stays low
+
+Possible reasons:
+
+- leaking service
+- too many processes
+- workload is too large for the server size
+
+---
+
+## Useful CLI
+
+### General verification
 
 ```bash
-sudo cat /etc/default/disk-mem-alert
-```
-
-Confirm the script can access it:
-
-```bash
+./scripts/health-check.sh
+systemctl status disk-mem-alert.timer
+systemctl list-timers | grep disk-mem-alert
 sudo systemctl start disk-mem-alert.service
-sudo journalctl -u disk-mem-alert.service --no-pager -n 80
-```
+sudo journalctl -u disk-mem-alert.service --no-pager -n 50
+tail -n 50 logs/health-check.log
+````
 
-### Permission denied when checking big directories
-
-* The script uses `sudo du` for `/var`. If you don’t want sudo, remove that part or restrict to user directories.
-* Quick test:
+### Disk troubleshooting CLI
 
 ```bash
-sudo du -xh /var | tail
-```
-
-### Script works manually but fails in systemd
-
-Confirm the absolute path is correct:
-
-```bash
-ls -l /home/$USER/disk-mem-alert/scripts/health-check.sh
-```
-
-Check logs:
-
-```bash
-sudo journalctl -u disk-mem-alert.service --no-pager -n 100
-```
-
-### Too many alerts (alert fatigue)
-
-* Raise thresholds in `health-check.sh`
-* Add “cooldown” logic (send alert only once per hour)
-* Reduce timer frequency from 5 minutes to 10–15 minutes
-
-### Disk still fills up even with alerts
-
-Clean old logs:
-
-```bash
-sudo journalctl --vacuum-time=7d
+df -h
+du -sh ~/*
+sudo du -xh /var | sort -h | tail
 sudo find /var/log -type f -name "*.log" -size +100M -exec ls -lh {} \;
-```
-
-Docker cleanup:
-
-```bash
+sudo journalctl --vacuum-time=7d
 docker system df
 docker system prune -af
 ```
 
-### Memory is always low
-
-Check top memory processes:
+### Memory troubleshooting CLI
 
 ```bash
 free -h
+vmstat 1 5
 ps -eo pid,cmd,%mem --sort=-%mem | head
+top
+htop
+sudo systemctl restart <service-name>
 ```
 
-Restart the service that is leaking:
+### Service troubleshooting CLI
 
 ```bash
-sudo systemctl restart <service-name>
+systemctl status disk-mem-alert.service
+systemctl status disk-mem-alert.timer
+sudo journalctl -u disk-mem-alert.service --no-pager -n 100
+sudo journalctl -u disk-mem-alert.timer --no-pager -n 100
+ls -l /home/$USER/disk-mem-alert/scripts/health-check.sh
+```
+
+### Alert troubleshooting CLI
+
+```bash
+sudo cat /etc/default/disk-mem-alert
+env | grep SLACK
 ```
 
 ---
 
-## Repo Structure (example)
+## Cleanup
 
-```text
-disk-mem-alert/
-├── scripts/
-│   └── health-check.sh
-├── logs/
-│   └── health-check.log
-├── screenshots/
-│   ├── 01-script-test.png
-│   ├── 02-timer-status.png
-│   ├── 03-list-timers.png
-│   ├── 04-slack-alert.png
-│   └── 05-log-file.png
-└── README.md
+If I want to remove the setup, I can stop the timer and service, delete the service files, and remove the project folder.
+
+```bash
+sudo systemctl disable --now disk-mem-alert.timer
+sudo systemctl stop disk-mem-alert.service
+sudo rm -f /etc/systemd/system/disk-mem-alert.service
+sudo rm -f /etc/systemd/system/disk-mem-alert.timer
+sudo systemctl daemon-reload
+rm -rf ~/disk-mem-alert
 ```
 
-
+```
 

@@ -1,371 +1,342 @@
 
 # Backup & Restore Drill (Linux) — “I can recover fast when things go wrong”
 
-Goal: Back up important folders and prove restore works.
+## Context
 
-A hands-on project where **I practice real backup + restore like a production team**: I back up app data, configs, and a database, then I **simulate a failure** and **restore everything** to prove I can recover quickly and safely.
+In a real Linux environment, backup is not enough by itself. What matters is whether I can **restore quickly and correctly** when something breaks.
+
+For this project, I practiced a real backup and restore drill on Linux. I backed up important application data, configuration files, and a small database, then I **simulated a failure** and restored everything to prove recovery works.
+
+This project shows that I do not just create backups and leave them there. I also test recovery, validate the restored data, and check that the service can come back in a safe and usable state.
 
 ---
 
 ## Problem
 
-In real environments, outages happen:
+In real environments, failures happen all the time:
 
-- Someone deletes a folder by mistake
-- A server disk fills up and corrupts data
-- A bad deploy breaks the app
-- A database gets wiped or a config is overwritten
+* Someone deletes an important folder by mistake
+* A bad deployment overwrites config files
+* A disk issue corrupts application data
+* A database becomes unreadable or gets wiped
+* A server problem forces recovery from backup
 
-If you don’t have a tested restore process, backups are just “hope”.  
-So I built a **backup + restore drill** to prove recovery works.
+The real problem is not only data loss. The real problem is **slow recovery** and **unclear restore steps**.
+
+If backups exist but nobody has tested restore, then backups are only theory. During an incident, that becomes risky for the business.
 
 ---
 
 ## Solution
 
-I created a simple, repeatable backup system that includes:
+I built a simple backup and restore drill on Linux to practice the full recovery process.
 
-- **Daily backups** (app files + config files + database)
-- **Retention policy** (keep last X days)
-- **Restore procedure** (tested end-to-end)
-- **Verification** (checksums + service health checks)
-- **Logs** (so I can troubleshoot quickly)
+The project includes:
 
-Then I simulate a failure and restore to confirm my recovery steps actually work.
+* Backup of application data
+* Backup of configuration files
+* Backup of database content
+* Integrity verification with checksums
+* Restore testing after simulated failure
+* Log review for troubleshooting
+* Validation after recovery
+
+Instead of only proving that backup files exist, I proved that I can actually **recover the environment and verify it works again**.
 
 ---
 
-## Architecture Diagram
-![alt text](image.png)
+## Architecture
+
 ![Architecture Diagram](screenshots/architecture.png)
 
-```text
-          +---------------------------+
-          |        Linux Server       |
-          |  /opt/myapp (app + data)  |
-          |  /etc/myapp (configs)     |
-          |  PostgreSQL/MySQL/SQLite  |
-          +-------------+-------------+
-                        |
-                        | backup.sh (cron/systemd timer)
-                        v
-          +---------------------------+
-          |      Backup Location      |
-          | /backups/myapp/YYYY-MM-DD |
-          |  - app.tar.gz             |
-          |  - configs.tar.gz         |
-          |  - db.sql.gz              |
-          |  - checksums.txt          |
-          |  - backup.log             |
-          +-------------+-------------+
-                        |
-                        | restore.sh (manual drill)
-                        v
-          +---------------------------+
-          |     Recovery Validation   |
-          | - file integrity check    |
-          | - db import success       |
-          | - systemctl status myapp  |
-          | - curl health endpoint    |
-          +---------------------------+
-````
+---
+
+## Workflow
+
+### Goal 1 — Prepare data that must be protected
+
+I created a simple app structure with:
+
+* application data
+* configuration files
+* a small database for backup testing
+
+The goal here was to have something realistic to protect, just like a real Linux server hosting an application.
 
 ---
 
-## Step-by-step CLI
+### Goal 2 — Run the backup and confirm it completed successfully
 
-> Assumption: Ubuntu Linux.
-> App path: `/opt/myapp`
-> Config path: `/etc/myapp`
-> Backups path: `/backups/myapp`
-> Change paths as needed for your environment.
+I performed the backup and confirmed that the backup location contained the expected files for:
 
-### 1) Create folders and a test app structure
+* app data
+* config data
+* database export
+* checksum file
+* backup log
 
-```bash
-sudo mkdir -p /opt/myapp/data /etc/myapp /backups/myapp /var/log/myapp
-echo "APP_ENV=prod" | sudo tee /etc/myapp/app.env
-echo "hello" | sudo tee /opt/myapp/data/sample.txt
-```
-
-### 2) (Optional) Create a small database to back up (SQLite demo)
-
-> If you use MySQL/Postgres in your real environment, skip this and use the DB steps below.
-
-```bash
-sudo apt-get update
-sudo apt-get install -y sqlite3
-
-sudo sqlite3 /opt/myapp/data/app.db "CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, name TEXT);"
-sudo sqlite3 /opt/myapp/data/app.db "INSERT INTO users(name) VALUES ('Liliane');"
-sudo sqlite3 /opt/myapp/data/app.db "SELECT * FROM users;"
-```
-
-### 3) Create the backup script
-
-```bash
-sudo tee /usr/local/bin/backup-myapp.sh > /dev/null <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-APP_DIR="/opt/myapp"
-CONF_DIR="/etc/myapp"
-BACKUP_ROOT="/backups/myapp"
-LOG_FILE="/var/log/myapp/backup.log"
-RETENTION_DAYS=7
-
-TODAY="$(date +%F)"
-DEST="${BACKUP_ROOT}/${TODAY}"
-
-mkdir -p "${DEST}"
-mkdir -p "$(dirname "${LOG_FILE}")"
-
-echo "==== Backup started: $(date) ====" | tee -a "${LOG_FILE}"
-
-# 1) Backup app files
-tar -czf "${DEST}/app.tar.gz" -C "${APP_DIR}" . 2>>"${LOG_FILE}"
-
-# 2) Backup configs
-tar -czf "${DEST}/configs.tar.gz" -C "${CONF_DIR}" . 2>>"${LOG_FILE}"
-
-# 3) Backup database (SQLite demo)
-if [ -f "${APP_DIR}/data/app.db" ]; then
-  sqlite3 "${APP_DIR}/data/app.db" .dump | gzip > "${DEST}/db.sql.gz"
-  echo "DB backup created: db.sql.gz" | tee -a "${LOG_FILE}"
-else
-  echo "No SQLite db found at ${APP_DIR}/data/app.db (skipping db backup)" | tee -a "${LOG_FILE}"
-fi
-
-# 4) Create checksums
-(
-  cd "${DEST}"
-  sha256sum *.gz > checksums.txt
-)
-
-echo "Checksums created: ${DEST}/checksums.txt" | tee -a "${LOG_FILE}"
-
-# 5) Cleanup old backups
-find "${BACKUP_ROOT}" -mindepth 1 -maxdepth 1 -type d -mtime +"${RETENTION_DAYS}" -print -exec rm -rf {} \; | tee -a "${LOG_FILE}"
-
-echo "==== Backup completed: $(date) ====" | tee -a "${LOG_FILE}"
-EOF
-
-sudo chmod +x /usr/local/bin/backup-myapp.sh
-```
-
-### 4) Run a manual backup (prove backup is created + logs are clean)
-
-```bash
-sudo /usr/local/bin/backup-myapp.sh
-ls -lah /backups/myapp/$(date +%F)
-sudo tail -n 50 /var/log/myapp/backup.log
-```
+This step proves the backup process ran successfully and produced usable artifacts.
 
 **Screenshot — Backup folder created**
 ![Backup folder created](screenshots/01-backup-folder.png)
 
+**What it should show:**
+
+* backup date folder created
+* backup files present
+* expected backup structure exists
+
 ---
+
+### Goal 3 — Review backup logs and confirm there were no obvious errors
+
+After the backup completed, I checked the backup log to make sure the process ran cleanly and recorded the expected actions.
+
+This step matters because backup logs are often the first place to investigate when a scheduled backup fails or produces incomplete results.
 
 **Screenshot — Backup log success**
 ![Backup log](screenshots/02-backup-log.png)
 
----
-### 5) Schedule backups (cron)
+**What it should show:**
 
-```bash
-sudo crontab -e
-```
-
-Add this line (runs daily at 1:00 AM):
-
-```cron
-0 1 * * * /usr/local/bin/backup-myapp.sh
-```
-
-Verify cron entry:
-
-```bash
-sudo crontab -l
-```
+* backup started successfully
+* backup completed successfully
+* no major errors in the log
 
 ---
 
-## Restore Drill (Simulate failure + recover)
+### Goal 4 — Simulate a failure on purpose
 
-### 6) Simulate a failure (intentional)
+To make the project realistic, I deleted important files and removed application content so I could test real recovery.
 
-> This is the drill: I break it on purpose so I can prove I can recover.
+This is the most important part of the drill: proving I can recover after damage, not just produce backup files.
 
-```bash
-# Show current state
-sudo ls -lah /opt/myapp/data
-sudo sqlite3 /opt/myapp/data/app.db "SELECT * FROM users;" || true
-
-# Simulate deletion/corruption
-sudo rm -rf /opt/myapp/data/*
-sudo rm -f /etc/myapp/app.env
-```
-
-echo "===== AFTER deletion ====="
-sudo ls -lah /opt/myapp/data
-sudo ls -lah /etc/myapp/app.env || echo "app.env is missing (deleted)"
-sudo sqlite3 /opt/myapp/data/app.db "SELECT * FROM users;" || echo "DB missing or unreadable (expected in drill)"
-
-
-**Screenshot — Simulated failure (files deleted)**
+**Screenshot — Simulated failure**
 ![Failure simulation](screenshots/03-failure-simulation.png)
-![alt text](image.png)
+
+**What it should show:**
+
+* missing app files
+* missing or damaged config
+* database/content no longer available
+* failure state clearly visible
 
 ---
 
-### 7) Create the restore script
+### Goal 5 — Restore from backup and validate recovery
 
-```bash
-sudo tee /usr/local/bin/restore-myapp.sh > /dev/null <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
+I restored the application data, configuration files, and database from the backup, then validated that the environment was usable again.
 
-APP_DIR="/opt/myapp"
-CONF_DIR="/etc/myapp"
-BACKUP_ROOT="/backups/myapp"
+Validation included checking that:
 
-if [ $# -ne 1 ]; then
-  echo "Usage: $0 <YYYY-MM-DD>"
-  exit 1
-fi
+* config files were back
+* application files were restored
+* database content was available again
+* the restore process completed without integrity errors
 
-DATE="$1"
-SRC="${BACKUP_ROOT}/${DATE}"
-
-if [ ! -d "${SRC}" ]; then
-  echo "Backup folder not found: ${SRC}"
-  exit 1
-fi
-
-echo "==== Restore started: $(date) ===="
-echo "Restoring from: ${SRC}"
-
-# Verify checksums first
-( cd "${SRC}" && sha256sum -c checksums.txt )
-
-# Restore app
-sudo mkdir -p "${APP_DIR}"
-sudo tar -xzf "${SRC}/app.tar.gz" -C "${APP_DIR}"
-
-# Restore configs
-sudo mkdir -p "${CONF_DIR}"
-sudo tar -xzf "${SRC}/configs.tar.gz" -C "${CONF_DIR}"
-
-# Restore DB (SQLite demo)
-if [ -f "${SRC}/db.sql.gz" ]; then
-  sudo mkdir -p "${APP_DIR}/data"
-  sudo rm -f "${APP_DIR}/data/app.db"
-  gunzip -c "${SRC}/db.sql.gz" | sudo sqlite3 "${APP_DIR}/data/app.db"
-  echo "DB restored: ${APP_DIR}/data/app.db"
-else
-  echo "No db backup found in ${SRC} (skipping db restore)"
-fi
-
-echo "==== Restore completed: $(date) ===="
-EOF
-
-sudo chmod +x /usr/local/bin/restore-myapp.sh
-```
-
-### 8) Run the restore (recover + validate)
-
-Use today’s date (or the folder date you want to restore):
-
-```bash
-sudo /usr/local/bin/restore-myapp.sh "$(date +%F)"
-```
-
-Validate:
-
-```bash
-sudo cat /etc/myapp/app.env
-sudo ls -lah /opt/myapp/data
-sudo sqlite3 /opt/myapp/data/app.db "SELECT * FROM users;" || true
-```
-
-**Screenshot — Restore command + validation output**
+**Screenshot — Restore validation**
 ![Restore validation](screenshots/04-restore-validation.png)
 
+**What it should show:**
+
+* restore completed successfully
+* restored files visible again
+* restored config available
+* restored database/content accessible
+
 ---
 
-## Outcome
+## Business Impact
 
-What I proved with this project:
+This project reflects real operational value.
 
-* I can **create reliable backups** of application data + config + database
-* I can **restore cleanly** after a real failure scenario
-* I verify integrity using **checksums**
-* I keep backups manageable with **retention cleanup**
-* I documented the process so someone else can follow it quickly
+A tested backup and restore process helps the business by:
 
-This is the exact mindset I use for production: **backup is not complete until restore is tested.**
+* reducing downtime during incidents
+* improving recovery confidence
+* protecting important data and configuration
+* making incident response faster
+* lowering the risk of failed recovery during production problems
+
+In simple terms, this means I can help a team recover faster when things go wrong instead of wasting time guessing during an outage.
+
+It also shows good operational discipline: **backup is only useful when restore has been tested**.
 
 ---
 
 ## Troubleshooting
 
-### Backup script fails with “permission denied”
+### Backup completed but expected files are missing
 
-Fix:
+Possible causes:
+
+* wrong source path
+* backup script skipped part of the data
+* permission issue on source files
+
+What to check:
+
+* backup destination contents
+* backup log output
+* source folders before and after backup
+
+---
+
+### Restore fails because checksum verification does not pass
+
+Possible causes:
+
+* backup files were modified
+* backup is incomplete
+* archive corruption happened
+
+What to do:
+
+* use a different backup date
+* re-run a clean backup
+* verify checksum file against backup artifacts
+
+---
+
+### Database restore does not work
+
+Possible causes:
+
+* database engine/tool is not installed
+* export file is incomplete
+* restore command used wrong database path
+
+What to check:
+
+* database client availability
+* backup file existence
+* restore output and error messages
+
+---
+
+### Scheduled backup did not run
+
+Possible causes:
+
+* cron entry missing
+* wrong path in scheduled command
+* script permission problem
+* environment variables not available in cron context
+
+What to check:
+
+* cron listing
+* system logs
+* backup log timestamp
+* script executable permission
+
+---
+
+### Restore completed but application is still unhealthy
+
+Possible causes:
+
+* config file is restored but incorrect
+* service restart needed
+* app depends on something not recovered yet
+* database restored but app cannot connect
+
+What to check:
+
+* service status
+* application logs
+* config file contents
+* health endpoint or app response
+
+---
+
+## Useful CLI
+
+These are useful commands for validation and troubleshooting during backup and restore work.
+
+### Check backup folder contents
 
 ```bash
-sudo chmod +x /usr/local/bin/backup-myapp.sh
-sudo chmod +x /usr/local/bin/restore-myapp.sh
+ls -lah /backups/myapp/$(date +%F)
 ```
 
-### Backup folder is empty or missing files
-
-Check:
+### Check backup log
 
 ```bash
-sudo /usr/local/bin/backup-myapp.sh
-sudo ls -lah /backups/myapp/$(date +%F)
-sudo tail -n 100 /var/log/myapp/backup.log
+sudo tail -n 50 /var/log/myapp/backup.log
 ```
 
-### Checksum verification fails during restore
-
-This usually means backup files were modified or incomplete.
-
-Fix:
-
-* Pick a different backup date folder
-* Re-run a fresh backup, then restore again
+### Show all available backup dates
 
 ```bash
 ls -1 /backups/myapp
-sudo /usr/local/bin/restore-myapp.sh "YYYY-MM-DD"
 ```
 
-### SQLite restore fails (command not found)
-
-Install sqlite:
+### Check whether important app files exist
 
 ```bash
-sudo apt-get update && sudo apt-get install -y sqlite3
+sudo ls -lah /opt/myapp/data
+sudo ls -lah /etc/myapp
 ```
 
-### Cron didn’t run
+### Validate restored database content
 
-Check cron logs:
+```bash
+sudo sqlite3 /opt/myapp/data/app.db "SELECT * FROM users;"
+```
+
+### Re-run backup manually
+
+```bash
+sudo /usr/local/bin/backup-myapp.sh
+```
+
+### Re-run restore manually
+
+```bash
+sudo /usr/local/bin/restore-myapp.sh "$(date +%F)"
+```
+
+### Check checksum file during restore troubleshooting
+
+```bash
+cd /backups/myapp/$(date +%F) && sha256sum -c checksums.txt
+```
+
+### Check cron entry
+
+```bash
+sudo crontab -l
+```
+
+### Check cron-related logs
 
 ```bash
 sudo grep CRON /var/log/syslog | tail -n 50
-sudo crontab -l
+```
+
+### Check service health after restore
+
+```bash
+systemctl status myapp
+curl -I http://localhost:8080/health
 ```
 
 ---
 
-## Next Improvements (what I would add in a real company)
+## Cleanup
 
-* Encrypt backups (GPG or KMS if in AWS)
-* Copy backups off-host (S3 / another server)
-* Add monitoring + alerting on backup failures
-* Automate restore tests weekly (non-prod)
-* Store secrets safely (SSM Parameter Store / Vault)
+If I want to remove the lab after testing, I clean up the app data, config, backup files, and logs created for the drill.
+
+Example cleanup areas:
+
+* `/opt/myapp`
+* `/etc/myapp`
+* `/backups/myapp`
+* `/var/log/myapp`
+* scheduled cron entry if added for the lab
+
+This keeps the environment clean after the drill is complete.
+
+---
 

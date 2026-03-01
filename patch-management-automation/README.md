@@ -1,317 +1,212 @@
 
 # Patch Management Automation (Linux) — Automated Weekly Updates + Reporting
 
-Goal: Regular patching with logs and controlled reboot.
+## Context
 
-> Patching is needed to **fix security holes and bugs so the server stays safe and stable**.
+Keeping Linux servers patched is part of basic system administration and security hygiene. In a real environment, servers need regular updates so security fixes, bug fixes, and package improvements are applied on time.
 
+For this project, I built a simple patch management automation workflow on Linux to make updates happen on schedule, save logs, and make it easy to review results after each run.
 
-I built this project to **automate patching on Linux servers** so updates happen on schedule, logs are saved, and I can quickly confirm what changed (or why it failed).
+This project focuses on **weekly patching with reporting and controlled reboot checks**.
 
 ---
 
 ## Problem
 
-Manual patching is risky and inconsistent:
+Manual patching creates too many risks in day-to-day operations:
 
-- Servers don’t get updated on time
-- People forget or delay updates
-- No clear proof of what was installed
-- If a patch fails, there’s no simple history to troubleshoot
+* Updates may be forgotten or delayed
+* Different servers may be patched at different times
+* There may be no clear proof of what changed
+* If something fails, it is harder to know where to investigate
+* Security exposure increases when critical fixes are not applied on time
 
-That leads to **security exposure**, **random outages**, and **stress during audits**.
+In short, manual patching is inconsistent, difficult to track, and stressful during troubleshooting or audits.
 
 ---
 
 ## Solution
 
-I automated patch management using a simple, reliable workflow:
+I automated the patching process using a scheduled Linux patch workflow based on:
 
-- **Schedule patching** (example: every Sunday at 2:00 AM)
-- **Run updates safely** with logging
-- **Capture “before vs after”** package state
-- **Store logs** in a predictable location
-- **Make troubleshooting easy** with clear commands and log checks
+* a patch script that applies updates and writes logs
+* a systemd service that runs the patch job
+* a systemd timer that schedules weekly execution
+* log and report output for quick validation after each run
+* reboot-required detection so I can decide the next maintenance action
 
-This repo includes:
-- a patch script (`patch.sh`)
-- a systemd service + timer (runs on schedule)
-- logs + reporting output
+This gives me a repeatable way to patch Linux servers with visibility into what happened before, during, and after the update process.
 
 ---
 
-## Architecture Diagram
+## Architecture
 
-### systemd timer automation
+The patching workflow is simple:
+
+* **systemd timer** triggers the patch job on schedule
+* **systemd service** starts the patch script
+* **patch script** updates packages, records logs, and generates a short report
+* **log files** provide evidence of the patch activity
+* **report output** gives a quick summary for review
 
 ![Architecture Diagram](screenshots/architecture.png)
 
 ---
 
-## Step-by-step CLI
+## Workflow
 
-> **Tested on Ubuntu 20.04/22.04** (works on most Debian/Ubuntu systems)
+### 1. Weekly patch schedule is enabled
 
-### 1) Create project structure
+**Goal:** Make patching automatic so the server updates on schedule without depending on manual action.
 
-```bash
-mkdir -p patch-management-automation/{scripts,systemd,docs,logs}
-cd patch-management-automation
-```
+The timer is configured to run weekly and remain persistent, which helps make patch execution predictable.
 
-### 2) Create the patch script
-
-```bash
-cat > scripts/patch.sh <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-LOG_DIR="/var/log/patching"
-TS="$(date +%F_%H%M%S)"
-LOG_FILE="${LOG_DIR}/patch_${TS}.log"
-REPORT_FILE="${LOG_DIR}/report_${TS}.txt"
-
-sudo mkdir -p "${LOG_DIR}"
-
-echo "===== PATCH START: ${TS} =====" | tee -a "${LOG_FILE}"
-
-echo "" | tee -a "${LOG_FILE}"
-echo ">>> Host:" | tee -a "${LOG_FILE}"
-hostnamectl | tee -a "${LOG_FILE}"
-
-echo "" | tee -a "${LOG_FILE}"
-echo ">>> Kernel (before):" | tee -a "${LOG_FILE}"
-uname -r | tee -a "${LOG_FILE}"
-
-echo "" | tee -a "${LOG_FILE}"
-echo ">>> Available updates (before):" | tee -a "${LOG_FILE}"
-sudo apt-get update -y | tee -a "${LOG_FILE}"
-apt list --upgradable 2>/dev/null | tee -a "${LOG_FILE}"
-
-echo "" | tee -a "${LOG_FILE}"
-echo ">>> Applying patches:" | tee -a "${LOG_FILE}"
-sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y | tee -a "${LOG_FILE}"
-
-echo "" | tee -a "${LOG_FILE}"
-echo ">>> Removing unused packages:" | tee -a "${LOG_FILE}"
-sudo apt-get autoremove -y | tee -a "${LOG_FILE}"
-
-echo "" | tee -a "${LOG_FILE}"
-echo ">>> Updated packages installed (summary):" | tee -a "${LOG_FILE}"
-grep -E "Setting up|Unpacking|Preparing to unpack" "${LOG_FILE}" | tail -n 60 | tee -a "${LOG_FILE}" || true
-
-echo "" | tee -a "${LOG_FILE}"
-echo ">>> Kernel (after):" | tee -a "${LOG_FILE}"
-uname -r | tee -a "${LOG_FILE}"
-
-echo "" | tee -a "${LOG_FILE}"
-echo ">>> Reboot required?" | tee -a "${LOG_FILE}"
-if [ -f /var/run/reboot-required ]; then
-  echo "YES - reboot required" | tee -a "${LOG_FILE}"
-else
-  echo "NO - reboot not required" | tee -a "${LOG_FILE}"
-fi
-
-echo "" | tee -a "${LOG_FILE}"
-echo "===== PATCH END: ${TS} =====" | tee -a "${LOG_FILE}"
-
-# Short “report” file (easy for quick review)
-{
-  echo "Patch Report - ${TS}"
-  echo "Host: $(hostname)"
-  echo "Kernel: $(uname -r)"
-  if [ -f /var/run/reboot-required ]; then
-    echo "Reboot required: YES"
-  else
-    echo "Reboot required: NO"
-  fi
-  echo "Log file: ${LOG_FILE}"
-} | sudo tee "${REPORT_FILE}" >/dev/null
-
-exit 0
-EOF
-
-chmod +x scripts/patch.sh
-```
-
-### 3) Create systemd service
-
-```bash
-cat > systemd/patching.service <<'EOF'
-[Unit]
-Description=Weekly Patch Management Automation
-Wants=network-online.target
-After=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/patch.sh
-EOF
-```
-
-### 4) Create systemd timer (weekly schedule)
-
-This example runs **Sunday at 2:00 AM**.
-
-```bash
-cat > systemd/patching.timer <<'EOF'
-[Unit]
-Description=Run patching.service weekly
-
-[Timer]
-OnCalendar=Sun *-*-* 02:00:00
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-EOF
-```
-
-### 5) Install files + enable timer
-
-```bash
-# install script
-sudo cp scripts/patch.sh /usr/local/bin/patch.sh
-sudo chmod +x /usr/local/bin/patch.sh
-
-# install systemd units
-sudo cp systemd/patching.service /etc/systemd/system/patching.service
-sudo cp systemd/patching.timer /etc/systemd/system/patching.timer
-
-# reload + enable
-sudo systemctl daemon-reload
-sudo systemctl enable --now patching.timer
-```
-
-### 6) Verify the schedule
-
-```bash
-systemctl list-timers --all | grep patching || true
-systemctl status patching.timer --no-pager
-```
-![alt text](image.png)
-**Screenshot — Timer enabled + next run time**
+**Screenshot — Timer enabled and next scheduled run**
 ![Timer Status](screenshots/01-timer-status.png)
 
-### 7) Run once manually (for testing)
+---
 
-```bash
-#sudo systemctl start patching.service
-sudo systemctl start --no-block patching.service
-sudo systemctl status patching.service --no-pager
-```
+### 2. Patch service runs the automation job
 
-**Screenshot — Manual patch run success**
+**Goal:** Launch the patch workflow through a controlled service instead of running random manual commands.
+
+The patching service starts the update process and provides a standard entry point for both scheduled execution and manual testing.
+
+**Screenshot — Service run completed successfully**
 ![Service Success](screenshots/02-service-success.png)
 
-### 8) Check logs and report
+---
 
-```bash
-# systemd logs
-journalctl -u patching.service -n 100 --no-pager
+### 3. Patch logs are written for review
 
-# patch logs
-sudo ls -lah /var/log/patching
-sudo tail -n 80 /var/log/patching/patch_*.log
-sudo cat /var/log/patching/report_*.txt | tail -n 30
-```
-![alt text](image.png)
-**Screenshot — Log folder output**
+**Goal:** Keep a record of patch activity so I can confirm what happened and investigate failures if needed.
+
+The workflow saves logs in a dedicated location, which makes it easier to review results after execution.
+
+**Screenshot — Patch log files created**
 ![Logs](screenshots/03-log-files.png)
 
-**Screenshot — Sample patch log content**
+---
+
+### 4. Detailed patch output is available
+
+**Goal:** Quickly confirm package activity, update behavior, and reboot status from the generated log content.
+
+This gives visibility into the patch run and helps confirm whether the server was updated successfully.
+
+**Screenshot — Example patch log content**
 ![Patch Log](screenshots/04-patch-log.png)
 
 ---
 
-## Outcome
+## Business Impact
 
-After this setup:
+This automation improves Linux operations in a practical way:
 
-* Patches run automatically on schedule (no manual effort)
-* I always have **proof** of what happened (logs + reports)
-* I can quickly see whether a **reboot is required**
-* Troubleshooting is easy because everything is consistent and repeatable
+* **Better security:** updates are applied regularly instead of being delayed
+* **More consistency:** the same patch workflow runs every time
+* **Easier audits:** logs and reports provide proof of patch activity
+* **Faster troubleshooting:** failures can be reviewed through service status and logs
+* **Lower operational risk:** reboot-required checks make post-patch actions clearer
+* **Less manual work:** patching becomes a scheduled maintenance process instead of a repetitive manual task
+
+In a real company environment, this kind of automation helps reduce missed updates, improves compliance, and makes server maintenance easier to manage.
 
 ---
 
 ## Troubleshooting
 
-### 1) Timer not running
+### Timer not running
 
-**Check:**
+If the timer does not appear active, the schedule may not be enabled correctly or systemd may need to reload unit files.
+
+### Service failed
+
+If the patch service fails, common causes include:
+
+* network or DNS issues
+* apt/dpkg lock already in use
+* insufficient disk space
+* package repository issues
+
+### apt or dpkg lock problem
+
+Another process such as unattended upgrades may already be using the package manager.
+
+### Low disk space
+
+If the system does not have enough free space, package installation or cleanup may fail.
+
+### Reboot required after patching
+
+Some updates, especially kernel-related updates, may require a reboot before the system is fully updated.
+
+---
+
+## Useful CLI
+
+### General verification
 
 ```bash
-systemctl status patching.timer --no-pager
 systemctl list-timers --all | grep patching || true
+systemctl status patching.timer --no-pager
+systemctl status patching.service --no-pager
+journalctl -u patching.service -n 100 --no-pager
 ```
 
-**Fix:**
+### Check patch log output
+
+```bash
+sudo ls -lah /var/log/patching
+sudo tail -n 80 /var/log/patching/patch_*.log
+sudo cat /var/log/patching/report_*.txt | tail -n 30
+```
+
+### Run patch job manually for testing
+
+```bash
+sudo systemctl start --no-block patching.service
+sudo systemctl status patching.service --no-pager
+```
+
+### Troubleshooting CLI
+
+**Timer issues**
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now patching.timer
+systemctl list-timers --all | grep patching || true
 ```
 
----
-
-### 2) Service failed
-
-**Check logs:**
+**Service failure**
 
 ```bash
 sudo systemctl status patching.service --no-pager
 journalctl -u patching.service -n 200 --no-pager
 ```
 
-**Common causes:**
-
-* DNS/network not ready (rare, but possible)
-* apt is locked (another process is using it)
-* disk space is full
-
----
-
-### 3) “Could not get lock /var/lib/dpkg/lock…”
-
-**Check who is holding the lock:**
+**apt/dpkg lock check**
 
 ```bash
 ps aux | egrep "apt|dpkg|unattended" | grep -v egrep
 ```
 
-**Fix (safe approach):**
-
-* Wait if `unattended-upgrades` is running
-* Then retry:
-
-```bash
-sudo systemctl start patching.service
-```
-
----
-
-### 4) Disk space issues
-
-**Check:**
+**Disk space check**
 
 ```bash
 df -h
 sudo du -sh /var/log/* | sort -h | tail -n 20
 ```
 
-**Fix:**
+**Disk cleanup**
 
 ```bash
 sudo apt-get autoremove -y
 sudo apt-get clean
 ```
 
----
-
-### 5) Reboot required after patches
-
-**Check:**
+**Reboot required check**
 
 ```bash
 test -f /var/run/reboot-required && echo "Reboot required"
@@ -320,8 +215,23 @@ cat /var/run/reboot-required.pkgs || true
 
 ---
 
-## GitHub Repo Link
+## Cleanup
 
-`https://github.com/lily4499/linux-projects/patch-management-automation`
+If I want to remove the automation from the server, I stop and disable the timer and service, then remove the installed units and script.
 
+```bash
+sudo systemctl stop patching.timer patching.service
+sudo systemctl disable patching.timer
+sudo rm -f /etc/systemd/system/patching.timer
+sudo rm -f /etc/systemd/system/patching.service
+sudo rm -f /usr/local/bin/patch.sh
+sudo systemctl daemon-reload
+```
 
+If I also want to remove saved patch logs:
+
+```bash
+sudo rm -rf /var/log/patching
+```
+
+---

@@ -1,498 +1,349 @@
 
 # Secure SSH Access Hardening (No Password Login)
 
-Goal: Lock down SSH so only keys can connect + reduce attack surface.
+## Context
 
-> Secure SSH hardening is needed to stop hackers from guessing passwords and make sure only trusted people can log in using SSH keys.
+In many Linux environments, SSH is the main way administrators connect to servers. If SSH is left with password login enabled, it becomes an easy target for attackers trying brute-force attempts, reused credentials, or weak passwords.
 
+For this project, I hardened SSH access on a Linux server so that only trusted users with approved SSH keys can log in. I also added extra protections to reduce exposure and make unauthorized access much harder.
 
-A practical Linux hardening project that replaces **password-based SSH login** with **SSH key authentication**, locks down access, and adds basic brute-force protection — so only approved users/devices can connect.
+This is a practical Linux security hardening project focused on replacing password-based SSH access with key-based authentication, restricting access, and adding basic brute-force protection.
 
 ---
 
 ## Problem
 
-Password-based SSH is easy to set up, but it’s also the most common target for:
+Password-based SSH is simple to use, but it creates a serious security risk.
 
-- brute-force attacks
-- credential stuffing (reused passwords)
-- weak/default passwords
+Common issues include:
+
+- brute-force attacks against port 22
+- reused or weak passwords
 - accidental exposure of SSH to the internet
+- attackers trying to log in as `root`
+- too many users having unnecessary SSH access
+- lack of visibility when failed login attempts happen
+
+In a real environment, leaving SSH open with password login increases the chance of unauthorized access and weakens the security of the whole server.
 
 ---
 
 ## Solution
 
-I hardened SSH access by enforcing:
+I secured SSH access by hardening the server in multiple layers.
 
-- ✅ **No password login** (SSH keys only)
-- ✅ **Disable root login**
-- ✅ **Limit who can SSH** (AllowUsers / AllowGroups)
-- ✅ **Reduce attack surface** (optional custom SSH port)
-- ✅ **Brute-force protection** (Fail2ban)
-- ✅ **Firewall rules** (UFW)
-- ✅ **Audit & verification steps** (logs + tests)
+The solution includes:
+
+- enforcing **SSH key authentication only**
+- disabling **password login**
+- disabling **root login**
+- limiting SSH access to only approved users
+- reducing the attack surface
+- enabling **Fail2ban** to block repeated failed login attempts
+- using the firewall to allow only SSH access that is needed
+- validating the configuration and checking logs after the change
+
+This makes SSH access much more secure and closer to what is expected in a real production environment.
 
 ---
 
-## Architecture (High-Level)
+## Architecture
 
-**Diagram — Key-only SSH + protection layers**
+**Diagram — Key-only SSH + protection layers**  
 ![Architecture Diagram](screenshots/architecture.png)
 
-**Screenshot — Lab / server access context**
-![SSH hardening lab](image.png)
+This setup follows a simple security flow:
+
+- the administrator connects from a trusted local machine
+- the Linux server accepts only SSH key authentication
+- password login is disabled
+- root login is disabled
+- firewall rules help limit exposure
+- Fail2ban watches failed attempts and blocks abusive IPs
+- logs can be reviewed for auditing and troubleshooting
 
 ---
 
-## Tech Stack / Tools
+## Workflow
 
-- Linux (Ubuntu/Debian or RHEL-based)
-- OpenSSH (`sshd`)
-- SSH keys (ed25519 recommended)
-- `ufw` (Ubuntu) or `firewalld` (RHEL)
-- `fail2ban`
-- `journalctl` + `/var/log/auth.log` for auditing
+### Goal 1 — Prepare the server for SSH hardening
 
----
+First, I made sure the server had the required services and tools for secure SSH access and protection. This included the SSH service itself, firewall support, and Fail2ban for brute-force protection.
 
-## Project Goals
-
-By the end of this project, you will have:
-
-- password login disabled for SSH
-- root login disabled
-- only one approved user/group allowed
-- firewall allowing SSH only
-- automatic ban for repeated failed attempts
-- a tested rollback/safety plan
-
----
-
-## Prerequisites
-
-- A Linux server (VM/EC2/on-prem) with SSH access
-- A non-root user with sudo privileges (recommended)
-- You can access the server from your local terminal
-
-> ⚠️ Safety Tip: Keep your current SSH session open while testing changes.  
-> Always confirm key login works **before** disabling password login.
-
----
-
-## Step-by-Step Implementation
-
-### 1) Update server and install required packages
-
-#### Ubuntu/Debian
-```bash
-sudo apt update && sudo apt -y upgrade
-sudo apt -y install openssh-server fail2ban ufw
-sudo systemctl enable --now ssh
-````
-
-#### RHEL/CentOS/Fedora (optional)
-
-```bash
-sudo dnf -y update
-sudo dnf -y install openssh-server fail2ban firewalld
-sudo systemctl enable --now sshd
-sudo systemctl enable --now firewalld
-```
-
-#### Proof for the screenshot 
-```bash
-dpkg -l | egrep 'openssh-server|fail2ban|ufw'
-systemctl status ssh --no-pager
-```
-
-**Screenshot — Packages installed + SSH running**
+**Screenshot — Packages installed + SSH running**  
 ![Packages installed](screenshots/01-packages-installed.png)
 
 ---
 
-### 2) Create a dedicated admin user (if needed)
+### Goal 2 — Create and verify the approved admin user
 
-```bash
-sudo adduser devopsadmin
-sudo usermod -aG sudo devopsadmin   # Ubuntu/Debian
-```
+Next, I created a dedicated admin user for SSH access instead of depending on root. This user is the approved account allowed to log in after hardening is applied.
 
-Confirm:
-
-```bash
-id devopsadmin
-groups devopsadmin
-```
-
-**Screenshot — User created + groups verified**
+**Screenshot — User created + groups verified**  
 ![User created](screenshots/02-user-created.png)
 
 ---
 
-### 3) Generate an SSH key on your local machine
+### Goal 3 — Generate a secure SSH key
 
-Use **ed25519** (recommended):
+I generated a secure SSH key pair from the local machine. This key is what replaces password-based access and becomes the trusted way to connect to the server.
 
-```bash
-ssh-keygen -t ed25519 -a 64 -C "devops-ssh-key"
-```
-
-* Save to default path: `~/.ssh/id_ed25519`
-* Set a strong passphrase (recommended)
-
-Verify files exist:
-
-```bash
-ls -la ~/.ssh/id_ed25519*
-```
-
-**Screenshot — SSH key generated (ed25519)**
+**Screenshot — SSH key generated**  
 ![SSH keygen](screenshots/03-ssh-keygen.png)
 
 ---
 
-### 4) Copy the public key to the server
+### Goal 4 — Copy the public key to the server and test access
 
-#### From the local machine, copy your public key up
-```bash
-scp -i ~/path/to/original-key.pem ~/.ssh/id_ed25519.pub ubuntu@3.236.82.93:/tmp/devopsadmin.pub
-```
-#### Now on the server (logged in as ubuntu/ec2-user):
-```bash
-sudo useradd -m -s /bin/bash devopsadmin 2>/dev/null || true
-sudo mkdir -p /home/devopsadmin/.ssh
-sudo chmod 700 /home/devopsadmin/.ssh
-sudo tee /home/devopsadmin/.ssh/authorized_keys < /tmp/devopsadmin.pub > /dev/null
-sudo chmod 600 /home/devopsadmin/.ssh/authorized_keys
-sudo chown -R devopsadmin:devopsadmin /home/devopsadmin/.ssh
-```
+After generating the SSH key, I copied the public key to the server for the approved admin user. Then I tested logging in with the key to confirm access works before locking down password authentication.
 
-Test key login From the local machine:
+**Screenshot — Public key copied to server**  
+![Key copied](screenshots/04-key-copied.png)
 
-```bash
-ssh devopsadmin@<SERVER_IP>
-```
-
-✅ If you can login without typing the server password (only key/passphrase), you’re good.
-
-**Screenshot — Public key copied to server**
-![ssh-copy-id](screenshots/04-key-copied.png)
-
----
-
-**Screenshot — Successful key-based login**
+**Screenshot — Successful key-based login**  
 ![Key login success](screenshots/05-key-login-success.png)
 
 ---
 
-### 5) Harden SSH server configuration
+### Goal 5 — Harden the SSH configuration
 
-Open SSH config:
+Once key-based login was confirmed, I updated the SSH server configuration to disable password login, disable root login, and allow only the approved user to connect.
 
-```bash
-sudo nano /etc/ssh/sshd_config
-```
+**Screenshot — Hardened sshd_config**  
+![sshd config hardened](screenshots/06-sshd-config-hardened.png)
 
-Apply these settings (keep only one of each setting):
-
-```conf
-# --- Secure SSH Hardening ---
-
-# Use SSH protocol 2
-Protocol 2
-
-# Disable root login
-PermitRootLogin no
-
-# Disable password authentication (keys only)
-PasswordAuthentication no
-KbdInteractiveAuthentication no
-ChallengeResponseAuthentication no
-UsePAM yes
-
-# Only allow specific user(s) to SSH
-AllowUsers devopsadmin
-
-# (Optional) Change default SSH port (example: 2222)
-# Port 2222
-
-# Limit authentication tries and reduce attack window
-MaxAuthTries 3
-LoginGraceTime 30
-ClientAliveInterval 300
-ClientAliveCountMax 2
-
-# Disable empty passwords
-PermitEmptyPasswords no
-
-# Optional: disable forwarding if not needed
-AllowTcpForwarding no
-X11Forwarding no
-```
-
-Validate SSH config syntax (important):
-
-```bash
-sudo sshd -t
-sudo sshd -t && echo "OK: sshd_config syntax is valid"
-
-```
-
-If no output, config is valid ✅
-
-Restart SSH safely:
-
-```bash
-sudo systemctl restart ssh   # Ubuntu/Debian
-# or
-sudo systemctl restart sshd  # RHEL
-```
-
-**Screenshot — Hardened sshd_config**
-![sshd\_config hardened](screenshots/06-sshd-config-hardened.png)
+**Screenshot — SSH config validation passed**  
+![sshd validation](screenshots/07-sshd-t-validation.png)
 
 ---
 
-**Screenshot — sshd -t validation (no errors)**
-![sshd -t validation](screenshots/07-sshd-t-validation.png)
+### Goal 6 — Restrict exposure with firewall rules
 
----
+After hardening SSH itself, I verified that firewall rules were in place so only the intended SSH access is allowed.
 
-### 6) Configure firewall (UFW on Ubuntu)
-
-Allow SSH (port 22):
-
-```bash
-sudo ufw allow 22/tcp
-sudo ufw enable
-sudo ufw status verbose
-```
-
-If you changed SSH port to 2222:
-
-```bash
-sudo ufw allow 2222/tcp
-sudo ufw delete allow 22/tcp
-sudo ufw status verbose
-```
-
-**Screenshot — UFW rules applied**
+**Screenshot — Firewall rules applied**  
 ![ufw status verbose](screenshots/08-ufw-status-verbose.png)
 
 ---
 
-### 7) Enable brute-force protection using Fail2ban
+### Goal 7 — Add brute-force protection with Fail2ban
 
-Check Fail2ban status:
+To reduce repeated login abuse, I enabled Fail2ban and confirmed the SSH jail was active. This adds automatic protection when too many failed attempts are detected.
 
-```bash
-sudo systemctl enable --now fail2ban
-sudo fail2ban-client status
-```
-
-Create local jail config:
-
-```bash
-sudo cp /etc/fail2ban/jail.conf /etc/fail2ban/jail.local
-sudo nano /etc/fail2ban/jail.local
-```
-
-Add/confirm SSH jail (example):
-
-```conf
-[sshd]
-enabled = true
-port = ssh
-logpath = %(sshd_log)s
-maxretry = 5
-findtime = 10m
-bantime = 1h
-```
-
-Restart Fail2ban:
-
-```bash
-sudo systemctl restart fail2ban
-sudo fail2ban-client status sshd
-```
-### Fix 
-```bash
-sudo grep -n '^\[sshd\]' /etc/fail2ban/jail.local
-sudo nano +320 /etc/fail2ban/jail.local
-```
-
-**Screenshot — Fail2ban enabled**
+**Screenshot — Fail2ban enabled**  
 ![fail2ban status](screenshots/09-fail2ban-status.png)
 
----
-
-**Screenshot — SSHD jail active**
+**Screenshot — SSHD jail active**  
 ![fail2ban sshd](screenshots/10-fail2ban-sshd-jail.png)
 
 ---
 
-## Verification Checklist
+### Goal 8 — Verify that insecure access is blocked
 
-### ✅ Confirm password login is disabled
+After the hardening steps, I tested that password login no longer works, key login still works, and root login is denied.
 
-From another terminal (or different machine), try:
-
-```bash
-ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no devopsadmin@<SERVER_IP>
-```
-
-Expected result: **Permission denied** ✅
-
-**Screenshot — Password login denied**
+**Screenshot — Password login denied**  
 ![Password denied](screenshots/11-password-login-denied.png)
 
----
-
-### ✅ Confirm key login still works
-
-```bash
-ssh devopsadmin@<SERVER_IP>
-```
-
-**Screenshot — Key login still works**
+**Screenshot — Key login still works**  
 ![Key login verified](screenshots/12-key-login-verified.png)
 
----
-
-### ✅ Confirm root login blocked
-
-```bash
-ssh root@<SERVER_IP>
-```
-
-Expected: **Permission denied** ✅
-
-**Screenshot — Root login denied**
-![Root denied](screenshots/13-root-login-denied.png)
+**Screenshot — Root login denied**  
+![Root login denied](screenshots/13-root-login-denied.png)
 
 ---
 
-### ✅ Check SSH logs
+### Goal 9 — Review logs and ban activity
 
-Ubuntu/Debian:
+Finally, I checked SSH logs and Fail2ban results to confirm login attempts are visible and protection is working as expected.
 
-```bash
-sudo tail -n 50 /var/log/auth.log
-```
-
-Systemd journal:
-
-```bash
-sudo journalctl -u ssh --no-pager -n 50
-# or
-sudo journalctl -u sshd --no-pager -n 50
-```
-
-**Screenshot — SSH logs (auth.log / journalctl)**
+**Screenshot — SSH logs**  
 ![SSH logs](screenshots/14-ssh-logs.png)
 
----
-
-### ✅ Check Fail2ban bans
-
-```bash
-sudo fail2ban-client status sshd
-```
-
-**Screenshot — Fail2ban counters / bans**
+**Screenshot — Fail2ban counters / bans**  
 ![Fail2ban bans](screenshots/15-fail2ban-bans.png)
 
 ---
 
-## Rollback / Recovery Plan (If You Lock Yourself Out)
+### Goal 10 — Keep a recovery path if locked out
 
-If lose access:
+As part of safe hardening, I kept a rollback option available in case access was lost. This is important because SSH security changes can lock out the administrator if key setup is not tested first.
 
-1. Use cloud console / VM console access (EC2 Instance Connect, Serial console, provider console)
-2. Re-enable password temporarily:
-
-```bash
-sudo nano /etc/ssh/sshd_config
-# set:
-PasswordAuthentication yes
-PermitRootLogin prohibit-password
-sudo systemctl restart ssh
-```
-
-3. Fix key issue, then disable passwords again.
-
-**Screenshot — Recovery change applied (console access)**
+**Screenshot — Recovery / rollback example**  
 ![Rollback recovery](screenshots/16-rollback-recovery.png)
 
 ---
 
-## Security Improvements (Optional Add-ons)
+## Business Impact
 
-✅ Restrict SSH to your IP only (UFW)
+This project improves security in a way that matters in real environments.
 
-```bash
-sudo ufw delete allow 22/tcp
-sudo ufw allow from <YOUR_PUBLIC_IP> to any port 22 proto tcp
-sudo ufw status verbose
-```
+Main impact:
 
-✅ Add MFA for SSH via PAM (advanced)
-✅ Use `AllowGroups sshusers` and manage access via group membership
-✅ Use `sshd_config.d/` (modern OpenSSH) to keep configs clean
-✅ Forward logs to SIEM / ELK stack for audit trails
+- reduces the risk of unauthorized SSH access
+- removes password-based login, which is one of the most common attack paths
+- prevents direct root login
+- limits access to only approved users
+- blocks repeated abusive login attempts automatically
+- improves audit visibility through logs
+- creates a safer baseline for Linux servers used in cloud or on-prem environments
 
----
-
-## Outcome
-
-After completing this project:
-
-* SSH access is **key-only**
-* root login is **disabled**
-* only approved users can connect
-* brute-force attempts are automatically blocked
-* firewall rules enforce minimal exposure
-* logs provide an audit trail for security and troubleshooting
+In a business setting, this kind of hardening helps protect production servers, administrative access, and sensitive workloads from common attack methods.
 
 ---
 
 ## Troubleshooting
 
-### “Permission denied (publickey)”
+### Key login does not work
 
-* Your key is not in `~/.ssh/authorized_keys` on the server
+Possible causes:
 
-* Permissions are wrong:
-
-  ```bash
-  chmod 700 ~/.ssh
-  chmod 600 ~/.ssh/authorized_keys
-  ```
-
-* Ensure correct user:
-
-  ```bash
-  ssh -i ~/.ssh/id_ed25519 devopsadmin@<SERVER_IP>
-  ```
-
-### “sshd won’t restart”
-
-* Run:
-
-  ```bash
-  sudo sshd -t
-  ```
-
-* Fix the line reported, then restart again.
+- the public key was not added correctly
+- the wrong user is being used
+- the `.ssh` directory permissions are wrong
+- the `authorized_keys` file permissions are wrong
+- the SSH client is using the wrong private key
 
 ---
 
-## Author
+### Password login is still working
 
-**Liliane Konissi**
-GitHub: [https://github.com/lily4499](https://github.com/lily4499)
-LinkedIn: [https://www.linkedin.com/in/liliane-2021](https://www.linkedin.com/in/liliane-2021)
+Possible causes:
+
+- the SSH config change was not applied
+- duplicate settings exist in the SSH config
+- the SSH service was not restarted
+- the wrong SSH config file was edited
+
+---
+
+### SSH service fails after config update
+
+Possible causes:
+
+- syntax error in `sshd_config`
+- duplicate or conflicting settings
+- unsupported option added by mistake
+
+---
+
+### Fail2ban is not banning failed attempts
+
+Possible causes:
+
+- the SSH jail is not enabled
+- the wrong log path is being used
+- Fail2ban service is not running
+- failed attempts are not reaching the expected log source
+
+---
+
+### Firewall blocks valid SSH access
+
+Possible causes:
+
+- the SSH port rule is missing
+- the wrong port was allowed in the firewall
+- the firewall was enabled before confirming the SSH rule
+- the SSH port was changed but the firewall was not updated
+
+---
+
+## Useful CLI
+
+### General verification
+
+```bash
+systemctl status ssh --no-pager
+systemctl status sshd --no-pager
+id devopsadmin
+groups devopsadmin
+````
+
+### SSH key verification
+
+```bash
+ls -la ~/.ssh/id_ed25519*
+ssh devopsadmin@<SERVER_IP>
+ssh -i ~/.ssh/id_ed25519 devopsadmin@<SERVER_IP>
+```
+
+### SSH config validation
+
+```bash
+sudo sshd -t
+sudo sshd -t && echo "OK: sshd_config syntax is valid"
+```
+
+### Restart SSH service
+
+```bash
+sudo systemctl restart ssh
+sudo systemctl restart sshd
+```
+
+### Firewall checks
+
+```bash
+sudo ufw status verbose
+sudo ufw allow 22/tcp
+sudo ufw allow 2222/tcp
+sudo ufw delete allow 22/tcp
+```
+
+### Fail2ban checks
+
+```bash
+sudo systemctl enable --now fail2ban
+sudo fail2ban-client status
+sudo fail2ban-client status sshd
+```
+
+### SSH log checks
+
+```bash
+sudo tail -n 50 /var/log/auth.log
+sudo journalctl -u ssh --no-pager -n 50
+sudo journalctl -u sshd --no-pager -n 50
+```
+
+### Troubleshooting CLI
+
+```bash
+chmod 700 ~/.ssh
+chmod 600 ~/.ssh/authorized_keys
+sudo grep -n '^\[sshd\]' /etc/fail2ban/jail.local
+sudo nano +320 /etc/fail2ban/jail.local
+sudo nano /etc/ssh/sshd_config
+```
+
+### Test blocked password login
+
+```bash
+ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no devopsadmin@<SERVER_IP>
+```
+
+### Test root login blocked
+
+```bash
+ssh root@<SERVER_IP>
+```
+
+---
+
+## Cleanup
+
+This project is mainly a security hardening project, so cleanup usually means reversing the changes only if needed for testing or lab reset.
+
+Possible cleanup actions:
+
+* remove the test admin user if it was created only for the lab
+* remove the SSH key from `authorized_keys` if rotating access
+* disable or uninstall Fail2ban in a temporary lab
+* reset firewall rules if this was only a practice environment
+* restore the previous SSH configuration if rolling back in a test setup
+
+If used in a real environment, these changes are usually meant to stay in place as part of the server security baseline.
 
 ```
-```
+
